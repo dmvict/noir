@@ -4,7 +4,7 @@
 //! `brillig_gen` is therefore the module which combines both
 //! ssa types and types in this module.
 //! A similar paradigm can be seen with the `acir_ir` module.
-pub(crate) mod artifact;
+pub mod artifact;
 pub(crate) mod debug_show;
 pub(crate) mod registers;
 

@@ -9,7 +9,7 @@
 
 use std::collections::BTreeSet;
 
-use crate::errors::RuntimeError;
+use crate::{brillig::brillig_ir::artifact::GeneratedBrillig, errors::RuntimeError};
 use acvm::acir::{
     circuit::{Circuit, PublicInputs},
     native_types::Witness,
@@ -21,7 +21,7 @@ use noirc_abi::Abi;
 
 use noirc_frontend::{hir::Context, monomorphization::ast::Program};
 
-use self::{abi_gen::gen_abi, acir_gen::GeneratedAcir, ssa_gen::Ssa};
+use self::{abi_gen::gen_abi, acir_gen::GeneratedAcir, ir::function::RuntimeType, ssa_gen::Ssa};
 
 pub mod abi_gen;
 mod acir_gen;
@@ -116,6 +116,76 @@ pub fn create_circuit(
     let debug_info = DebugInfo::new(locations);
 
     Ok((circuit, debug_info, abi))
+}
+
+/// Compiles the [`Program`] into brillig [acvm::acir::circuit::Circuit].
+///
+/// The output ACIR is is backend-agnostic and so must go through a transformation pass before usage in proof generation.
+pub fn create_brillig(
+    context: &Context,
+    program: Program,
+    enable_ssa_logging: bool,
+    enable_brillig_logging: bool,
+) -> Result<(GeneratedBrillig, DebugInfo, Abi), RuntimeError> {
+    let func_sig = program.main_function_signature.clone();
+    let generated_acir =
+        optimize_into_acir(program.clone(), enable_ssa_logging, enable_brillig_logging)?;
+    let brillig = compile_into_brillig(program, enable_ssa_logging, enable_brillig_logging)?;
+
+    let GeneratedAcir { return_witnesses, locations, input_witnesses, .. } = generated_acir;
+
+    let abi = gen_abi(context, func_sig, &input_witnesses, return_witnesses);
+
+    // This converts each im::Vector in the BTreeMap to a Vec
+    let locations = locations
+        .into_iter()
+        .map(|(index, locations)| (index, locations.into_iter().collect()))
+        .collect();
+
+    let debug_info = DebugInfo::new(locations);
+
+    Ok((brillig, debug_info, abi))
+}
+
+/// Optimize the given program by converting it into SSA
+/// form and performing optimizations there. When finished,
+/// convert the final SSA into ACIR and return it.
+pub(crate) fn compile_into_brillig(
+    program: Program,
+    print_ssa_passes: bool,
+    print_brillig_trace: bool,
+) -> Result<GeneratedBrillig, RuntimeError> {
+    let ssa = SsaBuilder::new(program, print_ssa_passes)
+        .run_pass(Ssa::defunctionalize, "After Defunctionalization:")
+        .run_pass(Ssa::inline_functions, "After Inlining:")
+        // Run mem2reg with the CFG separated into blocks
+        .run_pass(Ssa::mem2reg, "After Mem2Reg:")
+        .try_run_pass(Ssa::evaluate_assert_constant, "After Assert Constant:")?
+        .try_run_pass(Ssa::unroll_loops, "After Unrolling:")?
+        .run_pass(Ssa::simplify_cfg, "After Simplifying:")
+        // Run mem2reg before flattening to handle any promotion
+        // of values that can be accessed after loop unrolling.
+        // If there are slice mergers uncovered by loop unrolling
+        // and this pass is missed, slice merging will fail inside of flattening.
+        .run_pass(Ssa::mem2reg, "After Mem2Reg:")
+        .run_pass(Ssa::flatten_cfg, "After Flattening:")
+        // Run mem2reg once more with the flattened CFG to catch any remaining loads/stores
+        .run_pass(Ssa::mem2reg, "After Mem2Reg:")
+        .run_pass(Ssa::fold_constants, "After Constant Folding:")
+        .run_pass(Ssa::dead_instruction_elimination, "After Dead Instruction Elimination:")
+        .run_pass(runtime_handler, "Setup Brillig runtime")
+        .finish();
+
+    let brillig = ssa.to_brillig(print_brillig_trace);
+    let context = crate::ssa::acir_gen::Context::new();
+    let main = ssa.main();
+    Ok(context.gen_brillig_for(main, &brillig)?)
+}
+
+fn runtime_handler(ssa: Ssa) -> Ssa {
+    let mut ssa = ssa;
+    ssa.functions.iter_mut().for_each(|(_id, f)| f.set_runtime(RuntimeType::Brillig));
+    ssa
 }
 
 // This is just a convenience object to bundle the ssa with `print_ssa_passes` for debug printing.

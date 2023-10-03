@@ -1,5 +1,5 @@
 pub(crate) mod brillig_gen;
-pub(crate) mod brillig_ir;
+pub mod brillig_ir;
 
 use self::{
     brillig_gen::{brillig_fn::FunctionContext, convert_ssa_function},

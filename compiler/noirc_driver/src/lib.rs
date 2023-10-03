@@ -17,6 +17,9 @@ use noirc_frontend::node_interner::FuncId;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+#[cfg(feature = "brillig")]
+use noirc_evaluator::brillig::brillig_ir::artifact::GeneratedBrillig;
+
 mod contract;
 mod debug;
 mod program;
@@ -337,4 +340,57 @@ pub fn compile_no_check(
     let file_map = filter_relevant_files(&[debug.clone()], &context.file_manager);
 
     Ok(CompiledProgram { hash, circuit, debug, abi, file_map })
+}
+
+#[cfg(feature = "brillig")]
+/// Run the frontend to check the crate for errors then compile the main function if there were none
+///
+/// On success this returns the compiled brillig program alongside any warnings that were found.
+/// On error this returns the non-empty list of warnings and errors.
+pub fn compile_brillig_main(
+    context: &mut Context,
+    crate_id: CrateId,
+    options: &CompileOptions,
+    cached_program: Option<GeneratedBrillig>,
+) -> CompilationResult<GeneratedBrillig> {
+    let (_, warnings) = check_crate(context, crate_id, options.deny_warnings)?;
+
+    let main = match context.get_main_function(&crate_id) {
+        Some(m) => m,
+        None => {
+            // TODO(#2155): This error might be a better to exist in Nargo
+            let err = CustomDiagnostic::from_message(
+                "cannot compile crate into a program as it does not contain a `main` function",
+            )
+            .in_file(FileId::default());
+            return Err(vec![err]);
+        }
+    };
+
+    let brillig_program = compile_brillig_no_check(context, options, main, cached_program)?;
+
+    Ok((brillig_program, warnings))
+}
+
+#[cfg(feature = "brillig")]
+/// Compile the current crate. Assumes self.check_crate is called beforehand!
+///
+/// This function also assumes all errors in experimental_create_circuit and create_brillig
+/// are not warnings.
+#[allow(deprecated)]
+pub fn compile_brillig_no_check(
+    context: &Context,
+    options: &CompileOptions,
+    main_function: FuncId,
+    _cached_program: Option<GeneratedBrillig>,
+) -> Result<GeneratedBrillig, FileDiagnostic> {
+    let program = monomorphize(main_function, &context.def_interner);
+
+    let brillig = noirc_evaluator::ssa::create_brillig(
+        context,
+        program,
+        options.show_ssa,
+        options.show_brillig,
+    )?;
+    Ok(brillig.0)
 }

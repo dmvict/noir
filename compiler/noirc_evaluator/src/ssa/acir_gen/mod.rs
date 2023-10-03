@@ -36,7 +36,7 @@ use noirc_frontend::Distinctness;
 
 /// Context struct for the acir generation pass.
 /// May be similar to the Evaluator struct in the current SSA IR.
-struct Context {
+pub(crate) struct Context {
     /// Maps SSA values to `AcirVar`.
     ///
     /// This is needed so that we only create a single
@@ -150,7 +150,7 @@ impl Ssa {
 }
 
 impl Context {
-    fn new() -> Context {
+    pub(crate) fn new() -> Context {
         let mut acir_context = AcirContext::default();
         let current_side_effects_enabled_var = acir_context.add_constant(FieldElement::one());
 
@@ -522,7 +522,7 @@ impl Context {
         Ok(())
     }
 
-    fn gen_brillig_for(
+    pub(crate) fn gen_brillig_for(
         &self,
         func: &Function,
         brillig: &Brillig,
