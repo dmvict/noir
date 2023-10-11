@@ -859,21 +859,7 @@ impl AcirContext {
         inputs: Vec<AcirValue>,
         outputs: Vec<AcirType>,
     ) -> Result<Vec<AcirValue>, InternalError> {
-        let b_inputs = try_vecmap(inputs, |i| match i {
-            AcirValue::Var(var, _) => Ok(BrilligInputs::Single(self.var_to_expression(var)?)),
-            AcirValue::Array(vars) => {
-                let mut var_expressions: Vec<Expression> = Vec::new();
-                for var in vars {
-                    self.brillig_array_input(&mut var_expressions, var)?;
-                }
-                Ok(BrilligInputs::Array(var_expressions))
-            }
-            AcirValue::DynamicArray(_) => {
-                let mut var_expressions = Vec::new();
-                self.brillig_array_input(&mut var_expressions, i)?;
-                Ok(BrilligInputs::Array(var_expressions))
-            }
-        })?;
+        let b_inputs = self.convert_acir_inputs_to_brillig_inputs(inputs)?;
 
         // Optimistically try executing the brillig now, if we can complete execution they just return the results.
         // This is a temporary measure pending SSA optimizations being applied to Brillig which would remove constant-input opcodes (See #2066)
@@ -902,6 +888,27 @@ impl AcirContext {
         self.acir_ir.brillig(Some(predicate), generated_brillig, b_inputs, b_outputs);
 
         Ok(outputs_var)
+    }
+
+    pub(crate) fn convert_acir_inputs_to_brillig_inputs(
+        &mut self,
+        inputs: Vec<AcirValue>,
+    ) -> Result<Vec<BrilligInputs>, InternalError> {
+        try_vecmap(inputs, |i| match i {
+            AcirValue::Var(var, _) => Ok(BrilligInputs::Single(self.var_to_expression(var)?)),
+            AcirValue::Array(vars) => {
+                let mut var_expressions: Vec<Expression> = Vec::new();
+                for var in vars {
+                    self.brillig_array_input(&mut var_expressions, var)?;
+                }
+                Ok(BrilligInputs::Array(var_expressions))
+            }
+            AcirValue::DynamicArray(_) => {
+                let mut var_expressions = Vec::new();
+                self.brillig_array_input(&mut var_expressions, i)?;
+                Ok(BrilligInputs::Array(var_expressions))
+            }
+        })
     }
 
     fn brillig_array_input(

@@ -25,6 +25,8 @@ use crate::brillig::brillig_ir::BrilligContext;
 use crate::brillig::{brillig_gen::brillig_fn::FunctionContext as BrilligFunctionContext, Brillig};
 use crate::errors::{InternalError, RuntimeError};
 pub(crate) use acir_ir::generated_acir::GeneratedAcir;
+use acvm::acir::circuit::brillig::BrilligInputs;
+use acvm::brillig_vm::Registers;
 use acvm::{
     acir::{circuit::opcodes::BlockId, native_types::Expression},
     FieldElement,
@@ -532,6 +534,48 @@ impl Context {
         }
         self.acir_context.set_call_stack(CallStack::new());
         Ok(())
+    }
+
+    pub(crate) fn get_brillig_inputs_for(
+        &mut self,
+        main_func: &Function,
+    ) -> Result<(Registers, Vec<acvm::brillig_vm::brillig::Value>), RuntimeError> {
+        let dfg = &main_func.dfg;
+
+        let inputs = try_vecmap(dfg[main_func.entry_block()].parameters(), |param_id| {
+            let typ = dfg.type_of_value(*param_id);
+            self.create_value_from_type(&typ, &mut |this, _| Ok(this.acir_context.add_variable()))
+        })?;
+        let brillig_inputs = self.acir_context.convert_acir_inputs_to_brillig_inputs(inputs)?;
+
+        // // Set input values
+        let mut input_register_values: Vec<acvm::brillig_vm::brillig::Value> =
+            Vec::with_capacity(brillig_inputs.len());
+        let mut input_memory: Vec<acvm::brillig_vm::brillig::Value> = Vec::new();
+        // Each input represents a constant or array of constants.
+        // Iterate over each input and push it into registers and/or memory.
+        for input in brillig_inputs {
+            match input {
+                BrilligInputs::Single(expr) => {
+                    input_register_values
+                        .push(expr.to_const().expect("Expected constant value").into());
+                }
+                BrilligInputs::Array(expr_arr) => {
+                    // Attempt to fetch all array input values
+                    let memory_pointer = input_memory.len();
+                    for expr in expr_arr.iter() {
+                        input_memory.push(expr.to_const().expect("Expected array").into());
+                    }
+
+                    // Push value of the array pointer as a register
+                    input_register_values
+                        .push(acvm::brillig_vm::brillig::Value::from(memory_pointer));
+                }
+            }
+        }
+        let input_registers = Registers::load(input_register_values);
+
+        Ok((input_registers, input_memory))
     }
 
     pub(crate) fn gen_brillig_for(
