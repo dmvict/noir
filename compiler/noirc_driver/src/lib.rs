@@ -19,6 +19,8 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 #[cfg(feature = "brillig")]
+use acvm::brillig_vm::{brillig::Value, Registers};
+#[cfg(feature = "brillig")]
 use noirc_evaluator::brillig::brillig_ir::artifact::GeneratedBrillig;
 
 mod contract;
@@ -358,7 +360,7 @@ pub fn compile_brillig_main(
     crate_id: CrateId,
     options: &CompileOptions,
     cached_program: Option<GeneratedBrillig>,
-) -> CompilationResult<GeneratedBrillig> {
+) -> CompilationResult<(GeneratedBrillig, Registers, Vec<Value>)> {
     let (_, warnings) = check_crate(context, crate_id, options.deny_warnings)?;
 
     let main = match context.get_main_function(&crate_id) {
@@ -389,14 +391,14 @@ pub fn compile_brillig_no_check(
     options: &CompileOptions,
     main_function: FuncId,
     _cached_program: Option<GeneratedBrillig>,
-) -> Result<GeneratedBrillig, FileDiagnostic> {
+) -> Result<(GeneratedBrillig, Registers, Vec<Value>), FileDiagnostic> {
     let program = monomorphize(main_function, &context.def_interner);
 
-    let brillig = noirc_evaluator::ssa::create_brillig(
+    let brillig_parts = noirc_evaluator::ssa::create_brillig(
         context,
         program,
         options.show_ssa,
         options.show_brillig,
     )?;
-    Ok(brillig.0)
+    Ok((brillig_parts.0, brillig_parts.1, brillig_parts.2))
 }

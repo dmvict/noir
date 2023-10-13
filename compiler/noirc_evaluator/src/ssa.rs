@@ -10,9 +10,12 @@
 use std::collections::BTreeSet;
 
 use crate::{brillig::brillig_ir::artifact::GeneratedBrillig, errors::RuntimeError};
-use acvm::acir::{
-    circuit::{Circuit, PublicInputs},
-    native_types::Witness,
+use acvm::{
+    acir::{
+        circuit::{Circuit, PublicInputs},
+        native_types::Witness,
+    },
+    brillig_vm::{brillig::Value, Registers},
 };
 
 use noirc_errors::debug_info::DebugInfo;
@@ -130,11 +133,12 @@ pub fn create_brillig(
     program: Program,
     enable_ssa_logging: bool,
     enable_brillig_logging: bool,
-) -> Result<(GeneratedBrillig, DebugInfo, Abi), RuntimeError> {
+) -> Result<(GeneratedBrillig, Registers, Vec<Value>, DebugInfo, Abi), RuntimeError> {
     let func_sig = program.main_function_signature.clone();
     let generated_acir =
         optimize_into_acir(program.clone(), enable_ssa_logging, enable_brillig_logging)?;
-    let brillig = compile_into_brillig(program, enable_ssa_logging, enable_brillig_logging)?;
+    let brillig_components =
+        compile_into_brillig(program, enable_ssa_logging, enable_brillig_logging)?;
 
     let GeneratedAcir { return_witnesses, locations, input_witnesses, .. } = generated_acir;
 
@@ -148,7 +152,7 @@ pub fn create_brillig(
 
     let debug_info = DebugInfo::new(locations);
 
-    Ok((brillig, debug_info, abi))
+    Ok((brillig_components.0, brillig_components.1, brillig_components.2, debug_info, abi))
 }
 
 /// Optimize the given program by converting it into SSA
@@ -158,7 +162,7 @@ pub(crate) fn compile_into_brillig(
     program: Program,
     print_ssa_passes: bool,
     print_brillig_trace: bool,
-) -> Result<GeneratedBrillig, RuntimeError> {
+) -> Result<(GeneratedBrillig, Registers, Vec<Value>), RuntimeError> {
     let ssa = SsaBuilder::new(program, print_ssa_passes)
         .run_pass(Ssa::defunctionalize, "After Defunctionalization:")
         .run_pass(Ssa::inline_functions, "After Inlining:")
@@ -181,13 +185,14 @@ pub(crate) fn compile_into_brillig(
         .finish();
 
     let brillig = ssa.to_brillig(print_brillig_trace);
-    let context = crate::ssa::acir_gen::Context::new();
+    let mut context = crate::ssa::acir_gen::Context::new();
     let main = ssa.main();
-    Ok(context.gen_brillig_for(main, &brillig)?)
+    let brillig = context.gen_brillig_for(main, &brillig)?;
+    let inputs = context.get_brillig_inputs_for(main)?;
+    Ok((brillig, inputs.0, inputs.1))
 }
 
-fn runtime_handler(ssa: Ssa) -> Ssa {
-    let mut ssa = ssa;
+fn runtime_handler(mut ssa: Ssa) -> Ssa {
     ssa.functions.iter_mut().for_each(|(_id, f)| f.set_runtime(RuntimeType::Brillig));
     ssa
 }
