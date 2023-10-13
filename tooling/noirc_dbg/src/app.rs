@@ -113,14 +113,14 @@ pub(crate) struct RunningState {
 
 impl RunningState {
     pub(crate) fn new(src_path: &str, _vm_type: Option<&str>) -> Result<Self, DebuggingError> {
-        let program =
+        let (program, registers, memory) =
             compile(std::env::current_dir().unwrap().join(src_path).as_path().to_str().unwrap())
                 .unwrap();
 
         #[allow(deprecated)]
         let solver = Box::leak(Box::new(BarretenbergSolver::new()));
         let bytecode = Box::leak(Box::new(program.byte_code.clone()));
-        let vm = vm::new(bytecode, solver);
+        let vm = vm::new(bytecode, registers, memory, solver);
         Ok(RunningState {
             breakpoints: Vec::new(),
             running: false,
