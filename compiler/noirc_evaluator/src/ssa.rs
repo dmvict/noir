@@ -119,10 +119,10 @@ pub fn create_circuit(
     let mut debug_info = DebugInfo::new(locations);
 
     // Perform any ACIR-level optimizations
-    let (optimized_ciruit, transformation_map) = acvm::compiler::optimize(circuit);
+    let (optimized_circuit, transformation_map) = acvm::compiler::optimize(circuit);
     debug_info.update_acir(transformation_map);
 
-    Ok((optimized_ciruit, debug_info, abi))
+    Ok((optimized_circuit, debug_info, abi))
 }
 
 /// Compiles the [`Program`] into brillig [acvm::acir::circuit::Circuit].
